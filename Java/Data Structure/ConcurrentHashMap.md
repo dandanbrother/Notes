@@ -14,6 +14,19 @@ final Segment<K,V>[] segments;
 
 transient Set<K> keySet;
 transient Set<Map.Entry<K,V>> entrySet;
+
+//Segment class
+static final class Segment<K,V> extends ReentrantLock implements Serializable {
+       private static final long serialVersionUID = 2249069246763182397L;
+       
+       // 和 HashMap 中的 HashEntry 作用一样，真正存放数据的桶
+       transient volatile HashEntry<K,V>[] table;
+       transient int count;
+       transient int modCount;
+       transient int threshold;
+       final float loadFactor;
+       
+}
 ```
 
 **Java 1.7**
@@ -28,6 +41,64 @@ transient Set<Map.Entry<K,V>> entrySet;
 2. 遍历该 HashEntry，如果不为空则判断传入的 key 和当前遍历的 key 是否相等，相等则覆盖旧的 value。
 3. 不为空则需要新建一个 HashEntry 并加入到 Segment 中，同时会先判断是否需要扩容。
 4. 最后会解除在 1 中所获取当前 Segment 的锁。
+
+```java
+public V put(K key, V value) {
+    Segment<K,V> s;
+    if (value == null)
+        throw new NullPointerException();
+    int hash = hash(key);
+    int j = (hash >>> segmentShift) & segmentMask;
+    if ((s = (Segment<K,V>)UNSAFE.getObject          // nonvolatile; recheck
+         (segments, (j << SSHIFT) + SBASE)) == null) //  in ensureSegment
+        s = ensureSegment(j);
+    return s.put(key, hash, value, false);
+}
+
+final V put(K key, int hash, V value, boolean onlyIfAbsent) {
+    HashEntry<K,V> node = tryLock() ? null :
+        scanAndLockForPut(key, hash, value); // 尝试自旋，自旋次数超过限制，则转为阻塞锁
+    V oldValue;
+    try {
+        HashEntry<K,V>[] tab = table;
+        int index = (tab.length - 1) & hash;
+        HashEntry<K,V> first = entryAt(tab, index);
+        for (HashEntry<K,V> e = first;;) {
+            if (e != null) {
+                K k;
+                if ((k = e.key) == key ||
+                    (e.hash == hash && key.equals(k))) {
+                    oldValue = e.value;
+                    if (!onlyIfAbsent) {
+                        e.value = value;
+                        ++modCount;
+                    }
+                    break;
+                }
+                e = e.next;
+            }
+            else {
+                if (node != null)
+                    node.setNext(first);
+                else
+                    node = new HashEntry<K,V>(hash, key, value, first);
+                int c = count + 1;
+                if (c > threshold && tab.length < MAXIMUM_CAPACITY)
+                    rehash(node);
+                else
+                    setEntryAt(tab, index, node);
+                ++modCount;
+                count = c;
+                oldValue = null;
+                break;
+            }
+        }
+    } finally {
+        unlock();
+    }
+    return oldValue;
+}
+```
 
 
 
