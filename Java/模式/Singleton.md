@@ -6,7 +6,7 @@ public class Singleton {
         if(singleton == null){
             synchronized (Singleton.class){
                 if(singleton == null){
-                    singleton = new Singleton();
+                    singleton = new Singleton(); // 这一步会有多个指令，指令重排会导致先赋值再初始化。
                 }
             }
         }
